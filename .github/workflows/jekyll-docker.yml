@@ -33,8 +33,7 @@ jobs:
             starefossen/html-proofer:latest \
             /srv/jekyll/_site --disable-external --assume-extension
 
-      # Future expansion: Python AI checks
-      - name: Set up Python for future AI signals (optional)
+      - name: Set up Python for AI signals (optional)
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -49,19 +48,5 @@ jobs:
         run: |
           python ai_signal_check.py
 
-      # Deployment step (customize as needed)
-      # - name: Deploy to GitHub Pages or another host
-      #   run: echo "Add deployment steps here"
-
-    # Security best practices
     env:
       JEKYLL_ENV: production
-      # Add secrets as needed (e.g., for deployments)
-      # API_TOKEN: ${{ secrets.API_TOKEN }}
-
-# Notes:
-# - This workflow builds your Jekyll dashboard/documentation, checks for broken links, 
-#   and is ready for Python-based AI signal analysis.
-# - Extend the Python steps for your AI logic as your app grows.
-# - Uncomment and customize the deploy step for GitHub Pages, Netlify, or any host.
-# - Store all secrets in GitHub Actions secrets, never in code.
