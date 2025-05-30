@@ -1,4 +1,4 @@
-name: Jekyll Docker CI for AI Trader Signal App
+name: Jekyll Docker CI/CD for AI Trader Signal App
 
 on:
   push:
@@ -7,10 +7,15 @@ on:
     branches: [ Main ]
   workflow_dispatch:
 
+env:
+  JEKYLL_ENV: production
+  TZ: UTC
+
 jobs:
   build-jekyll-site:
+    name: Build, Test, and Lint Jekyll Site
     runs-on: ubuntu-latest
-    name: Build & Test Jekyll Site in Docker
+    timeout-minutes: 20
 
     steps:
       - name: Checkout repository
@@ -23,26 +28,61 @@ jobs:
         run: |
           docker run --rm \
             -v ${{ github.workspace }}:/srv/jekyll \
+            -e JEKYLL_ENV=$JEKYLL_ENV \
             jekyll/jekyll:4.2.2 \
-            jekyll build
+            jekyll build --future --strict_front_matter --trace
+
+      - name: Lint HTML with HTMLHint
+        run: |
+          docker run --rm \
+            -v ${{ github.workspace }}/_site:/src:ro \
+            node:20-alpine sh -c "npm install -g htmlhint && htmlhint /src/**/*.html || true"
 
       - name: Test generated site with html-proofer (link checker)
         run: |
           docker run --rm \
             -v ${{ github.workspace }}/_site:/srv/jekyll/_site \
             starefossen/html-proofer:latest \
-            /srv/jekyll/_site --disable-external --assume-extension
+            /srv/jekyll/_site \
+            --assume-extension --check-favicon --check-html \
+            --disable-external --enforce-https --allow-hash-href --log-level debug
+
+      - name: Scan built site for secrets (truffleHog)
+        run: |
+          docker run --rm -v ${{ github.workspace }}/_site:/src trufflesecurity/trufflehog filesystem /src || true
+
+      - name: Security scan Jekyll Docker image (Trivy)
+        uses: aquasecurity/trivy-action@v0.16.1
+        with:
+          image-ref: jekyll/jekyll:4.2.2
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v3
         with:
           name: jekyll-site
           path: _site
+          retention-days: 14
+
+      - name: Upload HTMLHint report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: htmlhint-report
+          path: .htmlhintrc || ./htmlhint.log
+          retention-days: 7
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          fields: repo,commit,author,action,eventName,ref,workflow,job,took
 
   ai-signal-checks:
-    runs-on: ubuntu-latest
     name: Run AI Signal Checks
+    runs-on: ubuntu-latest
     needs: build-jekyll-site
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
@@ -64,12 +104,63 @@ jobs:
       - name: Install Python dependencies (if present)
         if: exists('requirements.txt')
         run: |
-          pip install -r requirements.txt || echo "Python dependency installation failed"
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Lint AI scripts
+        if: exists('ai_signal_check.py')
+        run: |
+          pip install flake8 || true
+          flake8 ai_signal_check.py --max-line-length=120
 
       - name: Run AI signal checks
         if: exists('ai_signal_check.py')
         run: |
-          python ai_signal_check.py || echo "AI signal check script failed"
+          python ai_signal_check.py
 
-env:
-  JEKYLL_ENV: production
+      - name: Upload AI check logs
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: ai-signal-logs
+          path: ai_signal_check.log
+          retention-days: 7
+
+      - name: Notify Slack on failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          fields: repo,commit,author,action,eventName,ref,workflow,job,took
+
+  deploy:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: [build-jekyll-site, ai-signal-checks]
+    if: github.ref == 'refs/heads/Main'
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: jekyll-site
+          path: _site
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: _site
+          publish_branch: gh-pages
+          force_orphan: true
+          enable_jekyll: true
+
+      - name: Notify Slack on deployment
+        uses: 8398a7/action-slack@v3
+        with:
+          status: ${{ job.status }}
+          fields: repo,commit,author,action,eventName,ref,workflow,job,took
