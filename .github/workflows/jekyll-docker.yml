@@ -52,7 +52,7 @@ jobs:
           docker run --rm -v ${{ github.workspace }}/_site:/src trufflesecurity/trufflehog filesystem /src || true
 
       - name: Security scan Jekyll Docker image (Trivy)
-        uses: aquasecurity/trivy-action@v0.16.1
+        uses: aquasecurity/trivy-action@0.35.0
         with:
           image-ref: jekyll/jekyll:4.2.2
 
